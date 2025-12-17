@@ -1,4 +1,4 @@
-import fs from 'fs'
+import { promises as fs } from 'fs'
 import path from 'path'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
@@ -13,58 +13,61 @@ interface BlogPostFrontmatter {
   excerpt?: string
 }
 
-function getPost(slug: string): { frontmatter: BlogPostFrontmatter; content: string } | null {
+async function getPost(slug: string): Promise<{ frontmatter: BlogPostFrontmatter; content: string } | null> {
   const filePath = path.join(process.cwd(), 'content/blog', `${slug}.md`)
   
-  if (!fs.existsSync(filePath)) {
+  try {
+    const fileContent = await fs.readFile(filePath, 'utf8')
+  
+    // Parse frontmatter
+    const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)/
+    const match = fileContent.match(frontmatterRegex)
+    
+    if (!match) {
+      return null
+    }
+
+    const [, frontmatterContent, content] = match
+    
+    const titleMatch = frontmatterContent.match(/title:\s*"?([^"\n]+)"?/)
+    const dateMatch = frontmatterContent.match(/date:\s*"?([^"\n]+)"?/)
+    const excerptMatch = frontmatterContent.match(/excerpt:\s*"?([^"\n]+)"?/)
+
+    return {
+      frontmatter: {
+        title: titleMatch ? titleMatch[1] : slug,
+        date: dateMatch ? dateMatch[1] : new Date().toISOString().split('T')[0],
+        excerpt: excerptMatch ? excerptMatch[1] : undefined,
+      },
+      content: content.trim(),
+    }
+  } catch (error) {
+    console.error(`Error reading post ${slug}:`, error)
     return null
-  }
-
-  const fileContent = fs.readFileSync(filePath, 'utf8')
-  
-  // Parse frontmatter
-  const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)/
-  const match = fileContent.match(frontmatterRegex)
-  
-  if (!match) {
-    return null
-  }
-
-  const [, frontmatterContent, content] = match
-  
-  const titleMatch = frontmatterContent.match(/title:\s*"?([^"\n]+)"?/)
-  const dateMatch = frontmatterContent.match(/date:\s*"?([^"\n]+)"?/)
-  const excerptMatch = frontmatterContent.match(/excerpt:\s*"?([^"\n]+)"?/)
-
-  return {
-    frontmatter: {
-      title: titleMatch ? titleMatch[1] : slug,
-      date: dateMatch ? dateMatch[1] : new Date().toISOString().split('T')[0],
-      excerpt: excerptMatch ? excerptMatch[1] : undefined,
-    },
-    content: content.trim(),
   }
 }
 
-function getPostSlugs(): string[] {
+async function getPostSlugs(): Promise<string[]> {
   const postsDirectory = path.join(process.cwd(), 'content/blog')
   
-  if (!fs.existsSync(postsDirectory)) {
+  try {
+    const fileNames = await fs.readdir(postsDirectory)
+    return fileNames
+      .filter(file => file.endsWith('.md'))
+      .map(file => file.replace(/\.md$/, ''))
+  } catch (error) {
+    console.error('Error reading post slugs:', error)
     return []
   }
-
-  return fs.readdirSync(postsDirectory)
-    .filter(file => file.endsWith('.md'))
-    .map(file => file.replace(/\.md$/, ''))
 }
 
 export async function generateStaticParams() {
-  const slugs = getPostSlugs()
+  const slugs = await getPostSlugs()
   return slugs.map(slug => ({ slug }))
 }
 
 export async function generateMetadata({ params }: { params: PostParams }) {
-  const post = getPost(params.slug)
+  const post = await getPost(params.slug)
   
   if (!post) {
     return {
@@ -78,8 +81,8 @@ export async function generateMetadata({ params }: { params: PostParams }) {
   }
 }
 
-export default function BlogPost({ params }: { params: PostParams }) {
-  const post = getPost(params.slug)
+export default async function BlogPost({ params }: { params: PostParams }) {
+  const post = await getPost(params.slug)
 
   if (!post) {
     notFound()

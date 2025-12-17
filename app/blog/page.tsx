@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import fs from 'fs'
+import { promises as fs } from 'fs'
 import path from 'path'
 
 interface BlogPost {
@@ -9,40 +9,43 @@ interface BlogPost {
   date: string
 }
 
-function getBlogPosts(): BlogPost[] {
+async function getBlogPosts(): Promise<BlogPost[]> {
   const postsDirectory = path.join(process.cwd(), 'content/blog')
   
-  if (!fs.existsSync(postsDirectory)) {
+  try {
+    const fileNames = (await fs.readdir(postsDirectory)).filter(file => file.endsWith('.md'))
+  
+    const posts = await Promise.all(
+      fileNames.map(async (fileName) => {
+        const slug = fileName.replace(/\.md$/, '')
+        const fullPath = path.join(postsDirectory, fileName)
+        const fileContent = await fs.readFile(fullPath, 'utf8')
+    
+        // Parse frontmatter
+        const frontmatterRegex = /^---\n([\s\S]*?)\n---/
+        const match = fileContent.match(frontmatterRegex)
+        
+        if (!match) {
+          return null
+        }
+        
+        const frontmatterContent = match[1]
+        const titleMatch = frontmatterContent.match(/title:\s*"?([^"\n]+)"?/)
+        const dateMatch = frontmatterContent.match(/date:\s*"?([^"\n]+)"?/)
+        const excerptMatch = frontmatterContent.match(/excerpt:\s*"?([^"\n]+)"?/)
+        
+        return {
+          slug,
+          title: titleMatch ? titleMatch[1] : slug,
+          date: dateMatch ? dateMatch[1] : new Date().toISOString().split('T')[0],
+          excerpt: excerptMatch ? excerptMatch[1] : 'No excerpt provided',
+        }
+      })
+    ).then(results => results.filter(Boolean) as BlogPost[])
+  } catch (error) {
+    console.error('Error reading blog posts:', error)
     return []
   }
-
-  const fileNames = fs.readdirSync(postsDirectory).filter(file => file.endsWith('.md'))
-  
-  const posts = fileNames.map(fileName => {
-    const slug = fileName.replace(/\.md$/, '')
-    const fullPath = path.join(postsDirectory, fileName)
-    const fileContent = fs.readFileSync(fullPath, 'utf8')
-    
-    // Parse frontmatter
-    const frontmatterRegex = /^---\n([\s\S]*?)\n---/
-    const match = fileContent.match(frontmatterRegex)
-    
-    if (!match) {
-      return null
-    }
-    
-    const frontmatterContent = match[1]
-    const titleMatch = frontmatterContent.match(/title:\s*"?([^"\n]+)"?/)
-    const dateMatch = frontmatterContent.match(/date:\s*"?([^"\n]+)"?/)
-    const excerptMatch = frontmatterContent.match(/excerpt:\s*"?([^"\n]+)"?/)
-    
-    return {
-      slug,
-      title: titleMatch ? titleMatch[1] : slug,
-      date: dateMatch ? dateMatch[1] : new Date().toISOString().split('T')[0],
-      excerpt: excerptMatch ? excerptMatch[1] : 'No excerpt provided',
-    }
-  }).filter(Boolean) as BlogPost[]
   
   return posts.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
 }
@@ -52,8 +55,8 @@ export const metadata = {
   description: 'Read my latest blog posts',
 }
 
-export default function BlogPage() {
-  const posts = getBlogPosts()
+export default async function BlogPage() {
+  const posts = await getBlogPosts()
 
   return (
     <div className="space-y-8">
